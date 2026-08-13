@@ -1,0 +1,156 @@
+pipeline {
+
+    agent any
+
+    environment {
+
+        AWS_REGION = 'us-east-1'
+
+        ECR_REPOSITORY = 'three-tier-backend'
+
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('AWS Identity Check') {
+
+            steps {
+                sh '''
+                    aws sts get-caller-identity
+                '''
+            }
+        }
+
+        stage('Backend Test') {
+
+            steps {
+
+                dir('application/backend') {
+
+                    sh '''
+                        python3 --version
+                        python3 -m pip install -r requirements.txt
+                    '''
+                }
+            }
+        }
+
+        stage('Docker Build') {
+
+            steps {
+
+                dir('application/backend') {
+
+                    sh '''
+                        docker build \
+                        -t three-tier-backend:${BUILD_NUMBER} \
+                        -t three-tier-backend:latest \
+                        .
+                    '''
+                }
+            }
+        }
+
+        stage('ECR Login') {
+
+            steps {
+
+                sh '''
+                    AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
+                        --query Account \
+                        --output text)
+
+                    aws ecr get-login-password \
+                        --region ${AWS_REGION} | \
+                    docker login \
+                        --username AWS \
+                        --password-stdin \
+                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                '''
+            }
+        }
+
+        stage('Tag Docker Image') {
+
+            steps {
+
+                sh '''
+                    AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
+                        --query Account \
+                        --output text)
+
+                    docker tag \
+                        three-tier-backend:${BUILD_NUMBER} \
+                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}
+
+                    docker tag \
+                        three-tier-backend:latest \
+                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
+                '''
+            }
+        }
+
+        stage('Push to ECR') {
+
+            steps {
+
+                sh '''
+                    AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
+                        --query Account \
+                        --output text)
+
+                    docker push \
+                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}
+
+                    docker push \
+                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
+                '''
+            }
+        }
+
+        stage('Frontend Build') {
+
+            steps {
+
+                dir('application/frontend') {
+
+                    sh '''
+                        npm install
+                        npm run build
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy Frontend to S3') {
+
+            steps {
+
+                sh '''
+                    aws s3 sync \
+                        application/frontend/build/ \
+                        s3://three-tier-app-frontend-bucket
+                '''
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo 'CI/CD PIPELINE SUCCESSFUL'
+        }
+
+        failure {
+            echo 'CI/CD PIPELINE FAILED'
+        }
+    }
+}
