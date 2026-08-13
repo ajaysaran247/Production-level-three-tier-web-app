@@ -64,3 +64,33 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 
   role = aws_iam_role.ec2_role.name
 }
+
+############################################
+# Allow EC2 to read database secret
+############################################
+
+resource "aws_iam_role_policy" "ec2_secrets_manager" {
+
+  name = "ec2-read-database-secret"
+
+  role = aws_iam_role.ec2_role.id
+
+  policy = jsonencode({
+
+    Version = "2012-10-17"
+
+    Statement = [
+
+      {
+        Effect = "Allow"
+
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+
+        Resource = aws_secretsmanager_secret.database.arn
+      }
+
+    ]
+  })
+}

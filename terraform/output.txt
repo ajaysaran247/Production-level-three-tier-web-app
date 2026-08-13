@@ -1,0 +1,13 @@
+alb_dns_name = "three-tier-alb-1423009432.us-east-1.elb.amazonaws.com"
+frontend_bucket = "three-tier-app-frontend-bucket"
+private_app_subnets = [
+  "subnet-08cdffa43f313f609",
+  "subnet-0898a1f5766f4d899",
+]
+public_subnets = [
+  "subnet-09af331a2b1b630e9",
+  "subnet-0952cc654b90f2804",
+]
+rds_endpoint = "three-tier-db.c0zau2ookg69.us-east-1.rds.amazonaws.com:3306"
+sns_topic_arn = "arn:aws:sns:us-east-1:235229002060:three-tier-alerts"
+vpc_id = "vpc-0bd87ec8d053c9ad0"

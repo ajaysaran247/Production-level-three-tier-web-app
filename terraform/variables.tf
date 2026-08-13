@@ -54,3 +54,14 @@ variable "ami_id" {
 variable "instance_type" {
   default = "t3.micro"
 }
+variable "db_password" {
+
+  description = "Password for the RDS database"
+
+  type      = string
+  sensitive = true
+}
+variable "aws_account_id" {
+  description = "AWS Account ID"
+  type        = string
+}
