@@ -115,7 +115,41 @@ pipeline {
                 '''
             }
         }
+stage('Deploy Backend to EC2') {
 
+    steps {
+
+        sh '''
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
+                --query Account \
+                --output text)
+
+            IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
+
+            COMMAND_ID=$(aws ssm send-command \
+                --region ${AWS_REGION} \
+                --document-name "AWS-RunShellScript" \
+                --targets "Key=tag:Name,Values=Application-Server" \
+                --parameters commands="[
+                    \\"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com\\",
+                    \\"docker pull ${IMAGE_URI}\\",
+                    \\"docker rm -f backend || true\\",
+                    \\"docker run -d --name backend --restart unless-stopped -p 80:5000 ${IMAGE_URI}\\"
+                ]" \
+                --query "Command.CommandId" \
+                --output text)
+
+            echo "SSM Command ID: ${COMMAND_ID}"
+
+            sleep 10
+
+            aws ssm list-command-invocations \
+                --command-id ${COMMAND_ID} \
+                --details \
+                --region ${AWS_REGION}
+        '''
+    }
+}
         stage('Frontend Build') {
 
             steps {
