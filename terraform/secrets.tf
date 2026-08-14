@@ -4,7 +4,7 @@
 
 resource "aws_secretsmanager_secret" "database" {
 
-  name = "${var.project_name}/database-v2"
+  name = "${var.project_name}/database"
 
   description = "Database credentials for Production Three Tier Application"
 

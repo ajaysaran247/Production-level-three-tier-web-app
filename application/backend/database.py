@@ -4,7 +4,7 @@ import pymysql
 
 REGION = "us-east-1"
 # Replace this with the exact secret name you found in the previous step!
-SECRET_NAME = "three-tier-app/database-v2" 
+SECRET_NAME = "three-tier-app/database" 
 
 def get_database_credentials():
     # Connect to AWS Secrets Manager
