@@ -3,188 +3,100 @@ pipeline {
     agent any
 
     environment {
-
         AWS_REGION = 'us-east-1'
-
+        AWS_ACCOUNT_ID = '235229002060'
         ECR_REPOSITORY = 'three-tier-backend'
-
-        IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
 
         stage('Checkout') {
-
             steps {
                 checkout scm
             }
         }
 
         stage('AWS Identity Check') {
-
             steps {
                 sh '''
+                    echo "Checking AWS identity..."
                     aws sts get-caller-identity
                 '''
             }
         }
 
         stage('Backend Test') {
-
             steps {
-
                 dir('application/backend') {
-
                     sh '''
+                        echo "Python version:"
                         python3 --version
-                        python3 -m pip install -r requirements.txt
+
+                        echo "pip version:"
+                        python3 -m pip --version
+
+                        echo "Installing backend dependencies..."
+                        python3 -m pip install --user -r requirements.txt
                     '''
                 }
             }
         }
 
         stage('Docker Build') {
-
             steps {
-
                 dir('application/backend') {
-
                     sh '''
+                        echo "Building backend Docker image..."
+
                         docker build \
-                        -t three-tier-backend:${BUILD_NUMBER} \
-                        -t three-tier-backend:latest \
-                        .
+                          -t ${ECR_REPOSITORY}:${BUILD_NUMBER} .
                     '''
                 }
             }
         }
 
         stage('ECR Login') {
-
             steps {
-
                 sh '''
-                    AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
-                        --query Account \
-                        --output text)
+                    echo "Logging into Amazon ECR..."
 
                     aws ecr get-login-password \
-                        --region ${AWS_REGION} | \
+                      --region ${AWS_REGION} | \
                     docker login \
-                        --username AWS \
-                        --password-stdin \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                      --username AWS \
+                      --password-stdin \
+                      ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                 '''
             }
         }
 
-        stage('Tag Docker Image') {
-
+        stage('Push Backend Image') {
             steps {
-
                 sh '''
-                    AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
-                        --query Account \
-                        --output text)
+                    IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
+
+                    echo "Tagging image:"
+                    echo "${IMAGE_URI}"
 
                     docker tag \
-                        three-tier-backend:${BUILD_NUMBER} \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}
+                      ${ECR_REPOSITORY}:${BUILD_NUMBER} \
+                      ${IMAGE_URI}
 
-                    docker tag \
-                        three-tier-backend:latest \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
-                '''
-            }
-        }
+                    echo "Pushing image to ECR..."
 
-        stage('Push to ECR') {
-
-            steps {
-
-                sh '''
-                    AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
-                        --query Account \
-                        --output text)
-
-                    docker push \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}
-
-                    docker push \
-                        ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
-                '''
-            }
-        }
-stage('Deploy Backend to EC2') {
-
-    steps {
-
-        sh '''
-            AWS_ACCOUNT_ID=$(aws sts get-caller-identity \
-                --query Account \
-                --output text)
-
-            IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
-
-            COMMAND_ID=$(aws ssm send-command \
-                --region ${AWS_REGION} \
-                --document-name "AWS-RunShellScript" \
-                --targets "Key=tag:Name,Values=Application-Server" \
-                --parameters commands="[
-                    \\"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com\\",
-                    \\"docker pull ${IMAGE_URI}\\",
-                    \\"docker rm -f backend || true\\",
-                    \\"docker run -d --name backend --restart unless-stopped -p 80:5000 ${IMAGE_URI}\\"
-                ]" \
-                --query "Command.CommandId" \
-                --output text)
-
-            echo "SSM Command ID: ${COMMAND_ID}"
-
-            sleep 10
-
-            aws ssm list-command-invocations \
-                --command-id ${COMMAND_ID} \
-                --details \
-                --region ${AWS_REGION}
-        '''
-    }
-}
-        stage('Frontend Build') {
-
-            steps {
-
-                dir('application/frontend') {
-
-                    sh '''
-                        npm install
-                        npm run build
-                    '''
-                }
-            }
-        }
-
-        stage('Deploy Frontend to S3') {
-
-            steps {
-
-                sh '''
-                    aws s3 sync \
-                        application/frontend/build/ \
-                        s3://three-tier-app-frontend-bucket
+                    docker push ${IMAGE_URI}
                 '''
             }
         }
     }
 
     post {
-
         success {
-            echo 'CI/CD PIPELINE SUCCESSFUL'
+            echo 'JENKINS BACKEND PIPELINE SUCCESSFUL'
         }
 
         failure {
-            echo 'CI/CD PIPELINE FAILED'
+            echo 'JENKINS BACKEND PIPELINE FAILED'
         }
     }
 }
