@@ -6,6 +6,9 @@ pipeline {
         AWS_REGION = 'us-east-1'
         AWS_ACCOUNT_ID = '235229002060'
         ECR_REPOSITORY = 'three-tier-backend'
+        APPLICATION_INSTANCE_ID = 'i-0313ea6a5e2029ba4'
+        CONTAINER_NAME = 'three-tier-backend'
+        CONTAINER_PORT = '5000'
     }
 
     stages {
@@ -35,7 +38,7 @@ pipeline {
                         echo "pip version:"
                         python3 -m pip --version
 
-                        echo "Installing backend dependencies..."
+                        echo "Installing dependencies..."
                         python3 -m pip install --user -r requirements.txt
                     '''
                 }
@@ -46,7 +49,7 @@ pipeline {
             steps {
                 dir('application/backend') {
                     sh '''
-                        echo "Building backend Docker image..."
+                        echo "Building Docker image..."
 
                         docker build \
                           -t ${ECR_REPOSITORY}:${BUILD_NUMBER} .
@@ -58,7 +61,7 @@ pipeline {
         stage('ECR Login') {
             steps {
                 sh '''
-                    echo "Logging into Amazon ECR..."
+                    echo "Logging into ECR..."
 
                     aws ecr get-login-password \
                       --region ${AWS_REGION} | \
@@ -70,21 +73,97 @@ pipeline {
             }
         }
 
-        stage('Push Backend Image') {
+        stage('Push to ECR') {
             steps {
                 sh '''
                     IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
 
-                    echo "Tagging image:"
+                    echo "Image URI:"
                     echo "${IMAGE_URI}"
 
                     docker tag \
                       ${ECR_REPOSITORY}:${BUILD_NUMBER} \
                       ${IMAGE_URI}
 
-                    echo "Pushing image to ECR..."
-
                     docker push ${IMAGE_URI}
+                '''
+            }
+        }
+
+        stage('Deploy Backend to EC2') {
+            steps {
+                sh '''
+                    IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
+
+                    echo "Deploying:"
+                    echo "${IMAGE_URI}"
+
+                    COMMAND_ID=$(aws ssm send-command \
+                      --region ${AWS_REGION} \
+                      --instance-ids ${APPLICATION_INSTANCE_ID} \
+                      --document-name "AWS-RunShellScript" \
+                      --parameters "commands=[
+                        \\"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com\\",
+                        \\"docker pull ${IMAGE_URI}\\",
+                        \\"docker stop ${CONTAINER_NAME} || true\\",
+                        \\"docker rm ${CONTAINER_NAME} || true\\",
+                        \\"docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${CONTAINER_PORT}:${CONTAINER_PORT} ${IMAGE_URI}\\"
+                      ]" \
+                      --query 'Command.CommandId' \
+                      --output text)
+
+                    echo "SSM Command ID: ${COMMAND_ID}"
+
+                    echo "Waiting for deployment..."
+
+                    sleep 10
+
+                    aws ssm get-command-invocation \
+                      --region ${AWS_REGION} \
+                      --command-id ${COMMAND_ID} \
+                      --instance-id ${APPLICATION_INSTANCE_ID}
+                '''
+            }
+        }
+
+        stage('Backend Health Check') {
+            steps {
+                sh '''
+                    echo "Checking backend container..."
+
+                    COMMAND_ID=$(aws ssm send-command \
+                      --region ${AWS_REGION} \
+                      --instance-ids ${APPLICATION_INSTANCE_ID} \
+                      --document-name "AWS-RunShellScript" \
+                      --parameters "commands=[
+                        \\"docker ps --filter name=${CONTAINER_NAME}\\",
+                        \\"curl -f http://localhost:${CONTAINER_PORT}/ || exit 1\\"
+                      ]" \
+                      --query 'Command.CommandId' \
+                      --output text)
+
+                    echo "Health check command: ${COMMAND_ID}"
+
+                    sleep 5
+
+                    aws ssm get-command-invocation \
+                      --region ${AWS_REGION} \
+                      --command-id ${COMMAND_ID} \
+                      --instance-id ${APPLICATION_INSTANCE_ID}
+
+                    STATUS=$(aws ssm get-command-invocation \
+                      --region ${AWS_REGION} \
+                      --command-id ${COMMAND_ID} \
+                      --instance-id ${APPLICATION_INSTANCE_ID} \
+                      --query 'Status' \
+                      --output text)
+
+                    if [ "$STATUS" != "Success" ]; then
+                        echo "Backend health check FAILED"
+                        exit 1
+                    fi
+
+                    echo "Backend health check PASSED"
                 '''
             }
         }
@@ -92,11 +171,15 @@ pipeline {
 
     post {
         success {
-            echo 'JENKINS BACKEND PIPELINE SUCCESSFUL'
+            echo '======================================'
+            echo 'BACKEND CI/CD SUCCESSFUL'
+            echo '======================================'
         }
 
         failure {
-            echo 'JENKINS BACKEND PIPELINE FAILED'
+            echo '======================================'
+            echo 'BACKEND CI/CD FAILED'
+            echo '======================================'
         }
     }
 }
