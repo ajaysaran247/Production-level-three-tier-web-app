@@ -6,7 +6,7 @@ pipeline {
         AWS_REGION = 'us-east-1'
         AWS_ACCOUNT_ID = '235229002060'
         ECR_REPOSITORY = 'three-tier-backend'
-        APPLICATION_INSTANCE_ID = 'i-01bf357db331e04b9'
+        APPLICATION_INSTANCE_ID = 'i-0e183b6dd43d83db5'
         CONTAINER_NAME = 'three-tier-backend'
         CONTAINER_PORT = '5000'
     }
