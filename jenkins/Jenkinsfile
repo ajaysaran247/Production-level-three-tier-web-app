@@ -315,15 +315,81 @@ pipeline {
             }
         }
     }
+    stage('Frontend Build') {
+    steps {
+        dir('application/frontend') {
+            sh '''
+                echo "======================================"
+                echo "FRONTEND BUILD"
+                echo "======================================"
 
+                node --version
+                npm --version
+
+                echo "Installing frontend dependencies..."
+                npm install
+
+                echo "Building React application..."
+                npm run build
+
+                echo "Frontend build completed."
+
+                ls -lah build/
+            '''
+        }
+    }
+}
+stage('Deploy Frontend to S3') {
+    steps {
+        dir('application/frontend') {
+            sh '''
+                echo "======================================"
+                echo "DEPLOY FRONTEND TO S3"
+                echo "======================================"
+
+                aws s3 sync build/ \
+                  s3://three-tier-app-frontend-bucket/ \
+                  --delete \
+                  --region ${AWS_REGION}
+
+                echo "Frontend uploaded successfully."
+            '''
+        }
+    }
+}
+stage('Frontend Verification') {
+    steps {
+        sh '''
+            echo "======================================"
+            echo "FRONTEND VERIFICATION"
+            echo "======================================"
+
+            aws s3api head-object \
+              --bucket three-tier-app-frontend-bucket \
+              --key index.html \
+              --region ${AWS_REGION}
+
+            echo "Frontend index.html verified successfully."
+        '''
+    }
+}
     post {
 
         success {
             echo '''
-            ======================================
-            BACKEND CI/CD SUCCESSFUL
-            ======================================
-            '''
+======================================
+FULL CI/CD PIPELINE SUCCESSFUL
+======================================
+Backend:
+    Docker -> ECR -> ASG -> RDS
+
+Frontend:
+    React -> S3
+
+Deployment:
+    SUCCESS
+======================================
+'''
         }
 
         failure {
