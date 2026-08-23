@@ -1,21 +1,16 @@
 pipeline {
-
     agent any
 
     environment {
-        AWS_REGION = 'us-east-1'
+        AWS_REGION     = 'us-east-1'
         AWS_ACCOUNT_ID = '235229002060'
-
         ECR_REPOSITORY = 'three-tier-backend'
-
-        ASG_NAME = 'three-tier-asg'
-
+        ASG_NAME       = 'three-tier-asg'
         CONTAINER_NAME = 'three-tier-backend'
         CONTAINER_PORT = '5000'
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -37,25 +32,24 @@ pipeline {
         stage('Discover ASG Instances') {
             steps {
                 script {
-
                     sh '''
                         echo "======================================"
                         echo "DISCOVERING APPLICATION INSTANCES"
                         echo "======================================"
 
-                        aws autoscaling describe-auto-scaling-groups \
-                          --auto-scaling-group-names ${ASG_NAME} \
-                          --region ${AWS_REGION} \
-                          --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+                        aws autoscaling describe-auto-scaling-groups \\
+                          --auto-scaling-group-names ${ASG_NAME} \\
+                          --region ${AWS_REGION} \\
+                          --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \\
                           --output text
                     '''
 
                     env.APPLICATION_INSTANCE_IDS = sh(
                         script: '''
-                            aws autoscaling describe-auto-scaling-groups \
-                              --auto-scaling-group-names ${ASG_NAME} \
-                              --region ${AWS_REGION} \
-                              --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+                            aws autoscaling describe-auto-scaling-groups \\
+                              --auto-scaling-group-names ${ASG_NAME} \\
+                              --region ${AWS_REGION} \\
+                              --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \\
                               --output text
                         ''',
                         returnStdout: true
@@ -80,9 +74,7 @@ pipeline {
                         echo "======================================"
 
                         python3 --version
-
                         python3 -m pip --version
-
                         python3 -m pip install --user -r requirements.txt
                     '''
                 }
@@ -97,8 +89,7 @@ pipeline {
                         echo "DOCKER BUILD"
                         echo "======================================"
 
-                        docker build \
-                          -t ${ECR_REPOSITORY}:${BUILD_NUMBER} .
+                        docker build -t ${ECR_REPOSITORY}:${BUILD_NUMBER} .
                     '''
                 }
             }
@@ -111,11 +102,11 @@ pipeline {
                     echo "ECR LOGIN"
                     echo "======================================"
 
-                    aws ecr get-login-password \
-                      --region ${AWS_REGION} | \
-                    docker login \
-                      --username AWS \
-                      --password-stdin \
+                    aws ecr get-login-password \\
+                      --region ${AWS_REGION} | \\
+                    docker login \\
+                      --username AWS \\
+                      --password-stdin \\
                       ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                 '''
             }
@@ -133,10 +124,7 @@ pipeline {
                     echo "Image:"
                     echo "${IMAGE_URI}"
 
-                    docker tag \
-                      ${ECR_REPOSITORY}:${BUILD_NUMBER} \
-                      ${IMAGE_URI}
-
+                    docker tag ${ECR_REPOSITORY}:${BUILD_NUMBER} ${IMAGE_URI}
                     docker push ${IMAGE_URI}
                 '''
             }
@@ -156,40 +144,37 @@ pipeline {
 
                     for INSTANCE_ID in ${APPLICATION_INSTANCE_IDS}
                     do
-
                         echo ""
                         echo "--------------------------------------"
                         echo "Deploying to: ${INSTANCE_ID}"
                         echo "--------------------------------------"
 
-                        COMMAND_ID=$(aws ssm send-command \
-                          --region ${AWS_REGION} \
-                          --instance-ids ${INSTANCE_ID} \
-                          --document-name "AWS-RunShellScript" \
+                        COMMAND_ID=$(aws ssm send-command \\
+                          --region ${AWS_REGION} \\
+                          --instance-ids ${INSTANCE_ID} \\
+                          --document-name "AWS-RunShellScript" \\
                           --parameters "commands=[
                             \\"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com\\",
                             \\"docker pull ${IMAGE_URI}\\",
                             \\"docker stop ${CONTAINER_NAME} || true\\",
                             \\"docker rm ${CONTAINER_NAME} || true\\",
                             \\"docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${CONTAINER_PORT}:${CONTAINER_PORT} ${IMAGE_URI}\\"
-                          ]" \
-                          --query 'Command.CommandId' \
+                          ]" \\
+                          --query 'Command.CommandId' \\
                           --output text)
 
                         echo "SSM Command ID: ${COMMAND_ID}"
-
                         echo "Waiting for deployment on ${INSTANCE_ID}..."
 
                         STATUS="Pending"
 
                         for i in $(seq 1 30)
                         do
-
-                            STATUS=$(aws ssm get-command-invocation \
-                              --region ${AWS_REGION} \
-                              --command-id ${COMMAND_ID} \
-                              --instance-id ${INSTANCE_ID} \
-                              --query 'Status' \
+                            STATUS=$(aws ssm get-command-invocation \\
+                              --region ${AWS_REGION} \\
+                              --command-id ${COMMAND_ID} \\
+                              --instance-id ${INSTANCE_ID} \\
+                              --query 'Status' \\
                               --output text 2>/dev/null || echo "Pending")
 
                             echo "Current status: ${STATUS}"
@@ -198,22 +183,16 @@ pipeline {
                                 break
                             fi
 
-                            if [ "$STATUS" = "Failed" ] || \
-                               [ "$STATUS" = "Cancelled" ] || \
-                               [ "$STATUS" = "TimedOut" ]; then
-
+                            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
                                 echo "Deployment FAILED on ${INSTANCE_ID}"
-
-                                aws ssm get-command-invocation \
-                                  --region ${AWS_REGION} \
-                                  --command-id ${COMMAND_ID} \
+                                aws ssm get-command-invocation \\
+                                  --region ${AWS_REGION} \\
+                                  --command-id ${COMMAND_ID} \\
                                   --instance-id ${INSTANCE_ID}
-
                                 exit 1
                             fi
 
                             sleep 5
-
                         done
 
                         if [ "$STATUS" != "Success" ]; then
@@ -223,11 +202,10 @@ pipeline {
 
                         echo "Deployment successful on ${INSTANCE_ID}"
 
-                        aws ssm get-command-invocation \
-                          --region ${AWS_REGION} \
-                          --command-id ${COMMAND_ID} \
+                        aws ssm get-command-invocation \\
+                          --region ${AWS_REGION} \\
+                          --command-id ${COMMAND_ID} \\
                           --instance-id ${INSTANCE_ID}
-
                     done
 
                     echo ""
@@ -247,20 +225,19 @@ pipeline {
 
                     for INSTANCE_ID in ${APPLICATION_INSTANCE_IDS}
                     do
-
                         echo ""
                         echo "Checking ${INSTANCE_ID}"
 
-                        COMMAND_ID=$(aws ssm send-command \
-                          --region ${AWS_REGION} \
-                          --instance-ids ${INSTANCE_ID} \
-                          --document-name "AWS-RunShellScript" \
+                        COMMAND_ID=$(aws ssm send-command \\
+                          --region ${AWS_REGION} \\
+                          --instance-ids ${INSTANCE_ID} \\
+                          --document-name "AWS-RunShellScript" \\
                           --parameters "commands=[
                             \\"docker ps --filter name=${CONTAINER_NAME}\\",
                             \\"curl -f http://localhost:${CONTAINER_PORT}/health || exit 1\\",
                             \\"curl -f http://localhost:${CONTAINER_PORT}/database || exit 1\\"
-                          ]" \
-                          --query 'Command.CommandId' \
+                          ]" \\
+                          --query 'Command.CommandId' \\
                           --output text)
 
                         echo "Health command ID: ${COMMAND_ID}"
@@ -269,12 +246,11 @@ pipeline {
 
                         for i in $(seq 1 20)
                         do
-
-                            STATUS=$(aws ssm get-command-invocation \
-                              --region ${AWS_REGION} \
-                              --command-id ${COMMAND_ID} \
-                              --instance-id ${INSTANCE_ID} \
-                              --query 'Status' \
+                            STATUS=$(aws ssm get-command-invocation \\
+                              --region ${AWS_REGION} \\
+                              --command-id ${COMMAND_ID} \\
+                              --instance-id ${INSTANCE_ID} \\
+                              --query 'Status' \\
                               --output text 2>/dev/null || echo "Pending")
 
                             echo "Health status: ${STATUS}"
@@ -283,19 +259,16 @@ pipeline {
                                 break
                             fi
 
-                            if [ "$STATUS" = "Failed" ] || \
-                               [ "$STATUS" = "Cancelled" ] || \
-                               [ "$STATUS" = "TimedOut" ]; then
+                            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
                                 break
                             fi
 
                             sleep 5
-
                         done
 
-                        aws ssm get-command-invocation \
-                          --region ${AWS_REGION} \
-                          --command-id ${COMMAND_ID} \
+                        aws ssm get-command-invocation \\
+                          --region ${AWS_REGION} \\
+                          --command-id ${COMMAND_ID} \\
                           --instance-id ${INSTANCE_ID}
 
                         if [ "$STATUS" != "Success" ]; then
@@ -304,7 +277,6 @@ pipeline {
                         fi
 
                         echo "Health check PASSED on ${INSTANCE_ID}"
-
                     done
 
                     echo ""
@@ -314,82 +286,84 @@ pipeline {
                 '''
             }
         }
-    }
-    stage('Frontend Build') {
-    steps {
-        dir('application/frontend') {
-            sh '''
-                echo "======================================"
-                echo "FRONTEND BUILD"
-                echo "======================================"
 
-                node --version
-                npm --version
+        stage('Frontend Build') {
+            steps {
+                dir('application/frontend') {
+                    sh '''
+                        echo "======================================"
+                        echo "FRONTEND BUILD"
+                        echo "======================================"
 
-                echo "Installing frontend dependencies..."
-                npm install
+                        node --version
+                        npm --version
 
-                echo "Building React application..."
-                npm run build
+                        echo "Installing frontend dependencies..."
+                        npm install
 
-                echo "Frontend build completed."
+                        echo "Building React application..."
+                        npm run build
 
-                ls -lah build/
-            '''
+                        echo "Frontend build completed."
+                        ls -lah build/
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy Frontend to S3') {
+            steps {
+                dir('application/frontend') {
+                    sh '''
+                        echo "======================================"
+                        echo "DEPLOY FRONTEND TO S3"
+                        echo "======================================"
+
+                        aws s3 sync build/ \\
+                          s3://three-tier-app-frontend-bucket/ \\
+                          --delete \\
+                          --region ${AWS_REGION}
+
+                        echo "Frontend uploaded successfully."
+                    '''
+                }
+            }
+        }
+
+        stage('Frontend Verification') {
+            steps {
+                sh '''
+                    echo "======================================"
+                    echo "FRONTEND VERIFICATION"
+                    echo "======================================"
+
+                    aws s3api head-object \\
+                      --bucket three-tier-app-frontend-bucket \\
+                      --key index.html \\
+                      --region ${AWS_REGION}
+
+                    echo "Frontend index.html verified successfully."
+                '''
+            }
         }
     }
-}
-stage('Deploy Frontend to S3') {
-    steps {
-        dir('application/frontend') {
-            sh '''
-                echo "======================================"
-                echo "DEPLOY FRONTEND TO S3"
-                echo "======================================"
 
-                aws s3 sync build/ \
-                  s3://three-tier-app-frontend-bucket/ \
-                  --delete \
-                  --region ${AWS_REGION}
-
-                echo "Frontend uploaded successfully."
-            '''
-        }
-    }
-}
-stage('Frontend Verification') {
-    steps {
-        sh '''
-            echo "======================================"
-            echo "FRONTEND VERIFICATION"
-            echo "======================================"
-
-            aws s3api head-object \
-              --bucket three-tier-app-frontend-bucket \
-              --key index.html \
-              --region ${AWS_REGION}
-
-            echo "Frontend index.html verified successfully."
-        '''
-    }
-}
     post {
-
         success {
             echo '''
-======================================
-FULL CI/CD PIPELINE SUCCESSFUL
-======================================
-Backend:
-    Docker -> ECR -> ASG -> RDS
+            ======================================
+            FULL CI/CD PIPELINE SUCCESSFUL
+            ======================================
+            Backend:
+                Docker -> ECR -> ASG -> RDS
 
-Frontend:
-    React -> S3
+            Frontend:
+                React -> S3
 
-Deployment:
-    SUCCESS
-======================================
-'''
+            Deployment:
+                SUCCESS
+            ======================================
+            '''
         }
 
         failure {
