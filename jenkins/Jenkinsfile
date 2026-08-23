@@ -5,8 +5,11 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-1'
         AWS_ACCOUNT_ID = '235229002060'
+
         ECR_REPOSITORY = 'three-tier-backend'
-        APPLICATION_INSTANCE_ID = 'i-0e183b6dd43d83db5'
+
+        ASG_NAME = 'three-tier-asg'
+
         CONTAINER_NAME = 'three-tier-backend'
         CONTAINER_PORT = '5000'
     }
@@ -22,9 +25,49 @@ pipeline {
         stage('AWS Identity Check') {
             steps {
                 sh '''
-                    echo "Checking AWS identity..."
+                    echo "======================================"
+                    echo "AWS IDENTITY"
+                    echo "======================================"
+
                     aws sts get-caller-identity
                 '''
+            }
+        }
+
+        stage('Discover ASG Instances') {
+            steps {
+                script {
+
+                    sh '''
+                        echo "======================================"
+                        echo "DISCOVERING APPLICATION INSTANCES"
+                        echo "======================================"
+
+                        aws autoscaling describe-auto-scaling-groups \
+                          --auto-scaling-group-names ${ASG_NAME} \
+                          --region ${AWS_REGION} \
+                          --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+                          --output text
+                    '''
+
+                    env.APPLICATION_INSTANCE_IDS = sh(
+                        script: '''
+                            aws autoscaling describe-auto-scaling-groups \
+                              --auto-scaling-group-names ${ASG_NAME} \
+                              --region ${AWS_REGION} \
+                              --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+                              --output text
+                        ''',
+                        returnStdout: true
+                    ).trim()
+
+                    if (!env.APPLICATION_INSTANCE_IDS) {
+                        error("No InService instances found in ${ASG_NAME}")
+                    }
+
+                    echo "Application instances:"
+                    echo env.APPLICATION_INSTANCE_IDS
+                }
             }
         }
 
@@ -32,13 +75,14 @@ pipeline {
             steps {
                 dir('application/backend') {
                     sh '''
-                        echo "Python version:"
+                        echo "======================================"
+                        echo "BACKEND TEST"
+                        echo "======================================"
+
                         python3 --version
 
-                        echo "pip version:"
                         python3 -m pip --version
 
-                        echo "Installing dependencies..."
                         python3 -m pip install --user -r requirements.txt
                     '''
                 }
@@ -49,7 +93,9 @@ pipeline {
             steps {
                 dir('application/backend') {
                     sh '''
-                        echo "Building Docker image..."
+                        echo "======================================"
+                        echo "DOCKER BUILD"
+                        echo "======================================"
 
                         docker build \
                           -t ${ECR_REPOSITORY}:${BUILD_NUMBER} .
@@ -61,7 +107,9 @@ pipeline {
         stage('ECR Login') {
             steps {
                 sh '''
-                    echo "Logging into ECR..."
+                    echo "======================================"
+                    echo "ECR LOGIN"
+                    echo "======================================"
 
                     aws ecr get-login-password \
                       --region ${AWS_REGION} | \
@@ -76,9 +124,13 @@ pipeline {
         stage('Push to ECR') {
             steps {
                 sh '''
+                    echo "======================================"
+                    echo "PUSHING IMAGE TO ECR"
+                    echo "======================================"
+
                     IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
 
-                    echo "Image URI:"
+                    echo "Image:"
                     echo "${IMAGE_URI}"
 
                     docker tag \
@@ -90,38 +142,98 @@ pipeline {
             }
         }
 
-        stage('Deploy Backend to EC2') {
+        stage('Deploy Backend to ASG') {
             steps {
                 sh '''
+                    echo "======================================"
+                    echo "DEPLOYING BACKEND TO ASG INSTANCES"
+                    echo "======================================"
+
                     IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
 
-                    echo "Deploying:"
+                    echo "Image URI:"
                     echo "${IMAGE_URI}"
 
-                    COMMAND_ID=$(aws ssm send-command \
-                      --region ${AWS_REGION} \
-                      --instance-ids ${APPLICATION_INSTANCE_ID} \
-                      --document-name "AWS-RunShellScript" \
-                      --parameters "commands=[
-                        \\"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com\\",
-                        \\"docker pull ${IMAGE_URI}\\",
-                        \\"docker stop ${CONTAINER_NAME} || true\\",
-                        \\"docker rm ${CONTAINER_NAME} || true\\",
-                        \\"docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${CONTAINER_PORT}:${CONTAINER_PORT} ${IMAGE_URI}\\"
-                      ]" \
-                      --query 'Command.CommandId' \
-                      --output text)
+                    for INSTANCE_ID in ${APPLICATION_INSTANCE_IDS}
+                    do
 
-                    echo "SSM Command ID: ${COMMAND_ID}"
+                        echo ""
+                        echo "--------------------------------------"
+                        echo "Deploying to: ${INSTANCE_ID}"
+                        echo "--------------------------------------"
 
-                    echo "Waiting for deployment..."
+                        COMMAND_ID=$(aws ssm send-command \
+                          --region ${AWS_REGION} \
+                          --instance-ids ${INSTANCE_ID} \
+                          --document-name "AWS-RunShellScript" \
+                          --parameters "commands=[
+                            \\"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com\\",
+                            \\"docker pull ${IMAGE_URI}\\",
+                            \\"docker stop ${CONTAINER_NAME} || true\\",
+                            \\"docker rm ${CONTAINER_NAME} || true\\",
+                            \\"docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${CONTAINER_PORT}:${CONTAINER_PORT} ${IMAGE_URI}\\"
+                          ]" \
+                          --query 'Command.CommandId' \
+                          --output text)
 
-                    sleep 10
+                        echo "SSM Command ID: ${COMMAND_ID}"
 
-                    aws ssm get-command-invocation \
-                      --region ${AWS_REGION} \
-                      --command-id ${COMMAND_ID} \
-                      --instance-id ${APPLICATION_INSTANCE_ID}
+                        echo "Waiting for deployment on ${INSTANCE_ID}..."
+
+                        STATUS="Pending"
+
+                        for i in $(seq 1 30)
+                        do
+
+                            STATUS=$(aws ssm get-command-invocation \
+                              --region ${AWS_REGION} \
+                              --command-id ${COMMAND_ID} \
+                              --instance-id ${INSTANCE_ID} \
+                              --query 'Status' \
+                              --output text 2>/dev/null || echo "Pending")
+
+                            echo "Current status: ${STATUS}"
+
+                            if [ "$STATUS" = "Success" ]; then
+                                break
+                            fi
+
+                            if [ "$STATUS" = "Failed" ] || \
+                               [ "$STATUS" = "Cancelled" ] || \
+                               [ "$STATUS" = "TimedOut" ]; then
+
+                                echo "Deployment FAILED on ${INSTANCE_ID}"
+
+                                aws ssm get-command-invocation \
+                                  --region ${AWS_REGION} \
+                                  --command-id ${COMMAND_ID} \
+                                  --instance-id ${INSTANCE_ID}
+
+                                exit 1
+                            fi
+
+                            sleep 5
+
+                        done
+
+                        if [ "$STATUS" != "Success" ]; then
+                            echo "Deployment timed out on ${INSTANCE_ID}"
+                            exit 1
+                        fi
+
+                        echo "Deployment successful on ${INSTANCE_ID}"
+
+                        aws ssm get-command-invocation \
+                          --region ${AWS_REGION} \
+                          --command-id ${COMMAND_ID} \
+                          --instance-id ${INSTANCE_ID}
+
+                    done
+
+                    echo ""
+                    echo "======================================"
+                    echo "ALL ASG INSTANCES DEPLOYED"
+                    echo "======================================"
                 '''
             }
         }
@@ -129,57 +241,97 @@ pipeline {
         stage('Backend Health Check') {
             steps {
                 sh '''
-                    echo "Checking backend container..."
+                    echo "======================================"
+                    echo "BACKEND HEALTH CHECK"
+                    echo "======================================"
 
-                    COMMAND_ID=$(aws ssm send-command \
-                      --region ${AWS_REGION} \
-                      --instance-ids ${APPLICATION_INSTANCE_ID} \
-                      --document-name "AWS-RunShellScript" \
-                      --parameters "commands=[
-                        \\"docker ps --filter name=${CONTAINER_NAME}\\",
-                        \\"curl -f http://localhost:${CONTAINER_PORT}/ || exit 1\\"
-                      ]" \
-                      --query 'Command.CommandId' \
-                      --output text)
+                    for INSTANCE_ID in ${APPLICATION_INSTANCE_IDS}
+                    do
 
-                    echo "Health check command: ${COMMAND_ID}"
+                        echo ""
+                        echo "Checking ${INSTANCE_ID}"
 
-                    sleep 5
+                        COMMAND_ID=$(aws ssm send-command \
+                          --region ${AWS_REGION} \
+                          --instance-ids ${INSTANCE_ID} \
+                          --document-name "AWS-RunShellScript" \
+                          --parameters "commands=[
+                            \\"docker ps --filter name=${CONTAINER_NAME}\\",
+                            \\"curl -f http://localhost:${CONTAINER_PORT}/health || exit 1\\",
+                            \\"curl -f http://localhost:${CONTAINER_PORT}/database || exit 1\\"
+                          ]" \
+                          --query 'Command.CommandId' \
+                          --output text)
 
-                    aws ssm get-command-invocation \
-                      --region ${AWS_REGION} \
-                      --command-id ${COMMAND_ID} \
-                      --instance-id ${APPLICATION_INSTANCE_ID}
+                        echo "Health command ID: ${COMMAND_ID}"
 
-                    STATUS=$(aws ssm get-command-invocation \
-                      --region ${AWS_REGION} \
-                      --command-id ${COMMAND_ID} \
-                      --instance-id ${APPLICATION_INSTANCE_ID} \
-                      --query 'Status' \
-                      --output text)
+                        STATUS="Pending"
 
-                    if [ "$STATUS" != "Success" ]; then
-                        echo "Backend health check FAILED"
-                        exit 1
-                    fi
+                        for i in $(seq 1 20)
+                        do
 
-                    echo "Backend health check PASSED"
+                            STATUS=$(aws ssm get-command-invocation \
+                              --region ${AWS_REGION} \
+                              --command-id ${COMMAND_ID} \
+                              --instance-id ${INSTANCE_ID} \
+                              --query 'Status' \
+                              --output text 2>/dev/null || echo "Pending")
+
+                            echo "Health status: ${STATUS}"
+
+                            if [ "$STATUS" = "Success" ]; then
+                                break
+                            fi
+
+                            if [ "$STATUS" = "Failed" ] || \
+                               [ "$STATUS" = "Cancelled" ] || \
+                               [ "$STATUS" = "TimedOut" ]; then
+                                break
+                            fi
+
+                            sleep 5
+
+                        done
+
+                        aws ssm get-command-invocation \
+                          --region ${AWS_REGION} \
+                          --command-id ${COMMAND_ID} \
+                          --instance-id ${INSTANCE_ID}
+
+                        if [ "$STATUS" != "Success" ]; then
+                            echo "Health check FAILED on ${INSTANCE_ID}"
+                            exit 1
+                        fi
+
+                        echo "Health check PASSED on ${INSTANCE_ID}"
+
+                    done
+
+                    echo ""
+                    echo "======================================"
+                    echo "ALL BACKEND HEALTH CHECKS PASSED"
+                    echo "======================================"
                 '''
             }
         }
     }
 
     post {
+
         success {
-            echo '======================================'
-            echo 'BACKEND CI/CD SUCCESSFUL'
-            echo '======================================'
+            echo '''
+            ======================================
+            BACKEND CI/CD SUCCESSFUL
+            ======================================
+            '''
         }
 
         failure {
-            echo '======================================'
-            echo 'BACKEND CI/CD FAILED'
-            echo '======================================'
+            echo '''
+            ======================================
+            BACKEND CI/CD FAILED
+            ======================================
+            '''
         }
     }
 }
