@@ -49,3 +49,6 @@ echo "==================================================="
 echo " Jenkins is running! Your Initial Admin Password is:"
 sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 echo "==================================================="
+
+# Install Pip 
+sudo dnf install -y python3-pip

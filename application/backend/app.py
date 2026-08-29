@@ -9,7 +9,7 @@ CORS(app)
 @app.route("/")
 def home():
     return jsonify({
-        "message": "Production Three Tier Application",
+        "message": "Production Three Tier Application V22",
         "status": "Running"
     })
 

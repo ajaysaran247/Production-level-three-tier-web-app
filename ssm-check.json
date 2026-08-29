@@ -1,0 +1,12 @@
+<<'EOF'
+{
+  "commands": [
+    "echo '=== HOST ==='",
+    "hostname",
+    "echo '=== CONTAINERS ==='",
+    "docker ps",
+    "echo '=== IMAGES ==='",
+    "docker images"
+  ]
+}
+EOF

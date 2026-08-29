@@ -3,14 +3,10 @@
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "ssm:SendCommand",
-        "ssm:GetCommandInvocation",
-        "ssm:ListCommandInvocations",
-        "ssm:ListCommands",
-        "ec2:DescribeInstances"
-      ],
-      "Resource": "*"
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
     }
   ]
 }
