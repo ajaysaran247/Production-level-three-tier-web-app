@@ -1,6 +1,3 @@
-Here is the complete, unbroken `README.md` file in a single block. You can copy it all at once by clicking the **Copy code** button in the top right corner of this box and pasting it directly into GitHub.
-
-```markdown
 # 🚀 Production-Level Three-Tier Web Application on AWS
 
 A production-style three-tier web application deployed on AWS using **React, Flask, Docker, Amazon ECR, Amazon EC2, Auto Scaling, Application Load Balancer, Amazon RDS, Amazon S3, AWS Secrets Manager, AWS Systems Manager, CloudWatch, Terraform, and Jenkins CI/CD**.
