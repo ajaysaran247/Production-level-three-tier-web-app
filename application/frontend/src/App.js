@@ -14,9 +14,8 @@ function App() {
   return (
     <div>
       <h1>AWS Three Tier Application This is kamalesh website</h1>
-
+      <h1>AWS Three Tier Application</h1>
       <h2>{data.message}</h2>
-
       <p>{data.status}</p>
     </div>
   );

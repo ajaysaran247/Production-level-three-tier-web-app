@@ -1,12 +1,41 @@
-.env
-*.env
-node_modules/
-build/
+# ========================
+# 1. Frontend (Node.js/React)
+# ========================
+application/frontend/node_modules/
+application/frontend/build/
+application/frontend/dist/
+application/frontend/.env
+application/frontend/.env.local
+
+# ========================
+# 2. Backend (Python)
+# ========================
 __pycache__/
-.terraform/
+*.py[cod]
+*$py.class
+application/backend/venv/
+application/backend/env/
+application/backend/.env
+
+# ========================
+# 3. Infrastructure (Terraform)
+# ========================
+# Local .terraform directories
+**/.terraform/*
+# .tfstate files (CRITICAL: NEVER COMMIT THESE)
 *.tfstate
 *.tfstate.*
+# Crash log files
+crash.log
+crash.*.log
+# Ignore any .tfvars files that contain secrets
 *.tfvars
-*.tfstate
-*.tfstate.*
-*.pem
+*.tfvars.json
+
+# ========================
+# 4. OS & Editor Files
+# ========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
