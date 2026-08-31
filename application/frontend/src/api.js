@@ -1,3 +1,3 @@
-const API_URL = "http://three-tier-alb-1022638616.us-east-1.elb.amazonaws.com";
-
+// src/api.js
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 export default API_URL;
