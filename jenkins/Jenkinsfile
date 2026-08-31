@@ -82,6 +82,34 @@ pipeline {
 
 
         // =========================================================
+        // GET ALB DNS (used by frontend to reach backend)
+        // =========================================================
+        stage('Get ALB DNS') {
+            steps {
+                script {
+                    env.ALB_DNS = sh(
+                        script: '''
+                            aws elbv2 describe-load-balancers \
+                              --query "LoadBalancers[?contains(LoadBalancerName, 'three-tier')].DNSName" \
+                              --output text \
+                              --region ${AWS_REGION}
+                        ''',
+                        returnStdout: true
+                    ).trim()
+
+                    if (!env.ALB_DNS) {
+                        error("Could not find ALB DNS name. Check the LoadBalancerName filter matches your Terraform-created ALB.")
+                    }
+
+                    echo "======================================"
+                    echo "ALB DNS: ${env.ALB_DNS}"
+                    echo "======================================"
+                }
+            }
+        }
+
+
+        // =========================================================
         // BACKEND TEST
         // =========================================================
         stage('Backend Test') {
@@ -368,6 +396,10 @@ pipeline {
                         echo "FRONTEND BUILD"
                         echo "======================================"
 
+                        echo "Writing environment config..."
+                        echo "REACT_APP_API_URL=http://${ALB_DNS}" > .env
+                        cat .env
+
                         echo "Node version:"
                         node --version
 
@@ -482,6 +514,7 @@ pipeline {
             Frontend:
                 React
                 S3
+                ALB DNS injected at build time
 
             Deployment:
                 SUCCESS
