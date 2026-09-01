@@ -326,8 +326,8 @@ pipeline {
                           --document-name "AWS-RunShellScript" \
                           --parameters "commands=[
                             \\"docker ps --filter name=${CONTAINER_NAME}\\",
-                            \\"curl -f http://localhost:${CONTAINER_PORT}/health || exit 1\\",
-                            \\"curl -f http://localhost:${CONTAINER_PORT}/database || exit 1\\"
+                            \\"curl -f http://localhost:${CONTAINER_PORT}/api/health || exit 1\\",
+                            \\"curl -f http://localhost:${CONTAINER_PORT}/api/database || exit 1\\"
                           ]" \
                           --query 'Command.CommandId' \
                           --output text)
