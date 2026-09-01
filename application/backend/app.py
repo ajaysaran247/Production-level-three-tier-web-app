@@ -3,38 +3,33 @@ from flask_cors import CORS
 from database import get_connection
 
 app = Flask(__name__)
-
 CORS(app)
 
-@app.route("/")
+@app.route("/api/data")
 def home():
     return jsonify({
         "message": "Production Three Tier Application V22",
         "status": "Running"
     })
 
-@app.route("/health")
+@app.route("/api/health")
 def health():
     return jsonify({
         "status": "Healthy"
     })
 
-@app.route("/database")
+@app.route("/api/database")
 def database():
     try:
         connection = get_connection()
-
         with connection.cursor() as cursor:
             cursor.execute("SELECT NOW() AS `current_time`")
             result = cursor.fetchone()
-
         connection.close()
-
         return jsonify({
             "database": "Connected",
             "time": str(result["current_time"])
         })
-
     except Exception as e:
         return jsonify({
             "database": "Connection Failed",
