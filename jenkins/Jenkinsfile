@@ -4,12 +4,12 @@ pipeline {
 
     environment {
         AWS_REGION     = 'us-east-1'
-        AWS_ACCOUNT_ID = '235229002060'
+        AWS_ACCOUNT_ID = '042104537598'
         ECR_REPOSITORY = 'three-tier-backend'
         ASG_NAME       = 'three-tier-asg'
         CONTAINER_NAME = 'three-tier-backend'
         CONTAINER_PORT = '5000'
-        S3_BUCKET      = 'three-tier-app-frontend-bucket'
+        S3_BUCKET      = 'three-tier-webapp-frontend-bucket'
     }
 
     stages {
