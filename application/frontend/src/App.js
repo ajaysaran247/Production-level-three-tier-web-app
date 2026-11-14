@@ -39,7 +39,7 @@ function App() {
 
   return (
     <div style={{ padding: "40px", fontFamily: "'Segoe UI', Arial, sans-serif" }}>
-      <h1>AWS Three Tier Application - This is Kamalesh's website</h1>
+      <h1>AWS Mark</h1>
 
       {loading && <p>Loading data...</p>}
 
