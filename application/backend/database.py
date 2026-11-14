@@ -1,10 +1,11 @@
 import json
 import boto3
 import pymysql
+import os
 
 REGION = "us-east-1"
 # Replace this with the exact secret name you found in the previous step!
-SECRET_NAME = "three-tier-webapp/database" 
+SECRET_NAME = os.environ.get("SECRET_NAME", "three-tier-webapp/database")
 
 def get_database_credentials():
     # Connect to AWS Secrets Manager
