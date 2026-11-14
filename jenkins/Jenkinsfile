@@ -15,7 +15,7 @@ pipeline {
         CONTAINER_NAME = 'three-tier-backend'
         CONTAINER_PORT = '5000'
         S3_BUCKET      = 'three-tier-webapp-frontend-bucket'
-        SECRET_NAME    = 'three-tier-app/database'
+        SECRET_NAME    = 'three-tier-webapp/database'
     }
 
     stages {
