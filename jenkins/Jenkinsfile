@@ -2,6 +2,11 @@ pipeline {
 
     agent any
 
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
     environment {
         AWS_REGION     = 'us-east-1'
         AWS_ACCOUNT_ID = '042104537598'
@@ -10,6 +15,7 @@ pipeline {
         CONTAINER_NAME = 'three-tier-backend'
         CONTAINER_PORT = '5000'
         S3_BUCKET      = 'three-tier-webapp-frontend-bucket'
+        SECRET_NAME    = 'three-tier-app/database'
     }
 
     stages {
@@ -22,7 +28,6 @@ pipeline {
                 checkout scm
             }
         }
-
 
         // =========================================================
         // AWS IDENTITY
@@ -39,26 +44,12 @@ pipeline {
             }
         }
 
-
         // =========================================================
         // DISCOVER ASG INSTANCES
         // =========================================================
         stage('Discover ASG Instances') {
             steps {
                 script {
-
-                    sh '''
-                        echo "======================================"
-                        echo "DISCOVERING APPLICATION INSTANCES"
-                        echo "======================================"
-
-                        aws autoscaling describe-auto-scaling-groups \
-                          --auto-scaling-group-names ${ASG_NAME} \
-                          --region ${AWS_REGION} \
-                          --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
-                          --output text
-                    '''
-
                     env.APPLICATION_INSTANCE_IDS = sh(
                         script: '''
                             aws autoscaling describe-auto-scaling-groups \
@@ -74,12 +65,12 @@ pipeline {
                         error("No InService instances found in ${ASG_NAME}")
                     }
 
-                    echo "Application instances:"
-                    echo env.APPLICATION_INSTANCE_IDS
+                    echo "======================================"
+                    echo "Application instances: ${env.APPLICATION_INSTANCE_IDS}"
+                    echo "======================================"
                 }
             }
         }
-
 
         // =========================================================
         // GET ALB DNS (used by frontend to reach backend)
@@ -108,7 +99,6 @@ pipeline {
             }
         }
 
-
         // =========================================================
         // BACKEND TEST
         // =========================================================
@@ -124,7 +114,6 @@ pipeline {
                         python3 -m pip --version
 
                         echo "Installing backend dependencies..."
-
                         python3 -m pip install --user -r requirements.txt
 
                         echo "Backend dependencies installed successfully."
@@ -132,7 +121,6 @@ pipeline {
                 }
             }
         }
-
 
         // =========================================================
         // DOCKER BUILD
@@ -153,7 +141,6 @@ pipeline {
                 }
             }
         }
-
 
         // =========================================================
         // ECR LOGIN
@@ -177,7 +164,6 @@ pipeline {
             }
         }
 
-
         // =========================================================
         // PUSH IMAGE TO ECR
         // =========================================================
@@ -190,8 +176,7 @@ pipeline {
 
                     IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
 
-                    echo "Image:"
-                    echo "${IMAGE_URI}"
+                    echo "Image: ${IMAGE_URI}"
 
                     docker tag \
                       ${ECR_REPOSITORY}:${BUILD_NUMBER} \
@@ -204,7 +189,6 @@ pipeline {
             }
         }
 
-
         // =========================================================
         // DEPLOY BACKEND TO ALL ASG INSTANCES
         // =========================================================
@@ -216,13 +200,10 @@ pipeline {
                     echo "======================================"
 
                     IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${BUILD_NUMBER}"
-
-                    echo "Image URI:"
-                    echo "${IMAGE_URI}"
+                    echo "Image URI: ${IMAGE_URI}"
 
                     for INSTANCE_ID in ${APPLICATION_INSTANCE_IDS}
                     do
-
                         echo ""
                         echo "--------------------------------------"
                         echo "Deploying to: ${INSTANCE_ID}"
@@ -237,7 +218,7 @@ pipeline {
                             \\"docker pull ${IMAGE_URI}\\",
                             \\"docker stop ${CONTAINER_NAME} || true\\",
                             \\"docker rm ${CONTAINER_NAME} || true\\",
-                            \\"docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${CONTAINER_PORT}:${CONTAINER_PORT} ${IMAGE_URI}\\"
+                            \\"docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -e AWS_REGION=${AWS_REGION} -e AWS_DEFAULT_REGION=${AWS_REGION} -e SECRET_NAME=${SECRET_NAME} -p ${CONTAINER_PORT}:${CONTAINER_PORT} ${IMAGE_URI}\\"
                           ]" \
                           --query 'Command.CommandId' \
                           --output text)
@@ -249,7 +230,6 @@ pipeline {
 
                         for i in $(seq 1 30)
                         do
-
                             STATUS=$(aws ssm get-command-invocation \
                               --region ${AWS_REGION} \
                               --command-id ${COMMAND_ID} \
@@ -266,19 +246,15 @@ pipeline {
                             if [ "$STATUS" = "Failed" ] || \
                                [ "$STATUS" = "Cancelled" ] || \
                                [ "$STATUS" = "TimedOut" ]; then
-
                                 echo "Deployment FAILED on ${INSTANCE_ID}"
-
                                 aws ssm get-command-invocation \
                                   --region ${AWS_REGION} \
                                   --command-id ${COMMAND_ID} \
                                   --instance-id ${INSTANCE_ID}
-
                                 exit 1
                             fi
 
                             sleep 5
-
                         done
 
                         if [ "$STATUS" != "Success" ]; then
@@ -292,7 +268,6 @@ pipeline {
                           --region ${AWS_REGION} \
                           --command-id ${COMMAND_ID} \
                           --instance-id ${INSTANCE_ID}
-
                     done
 
                     echo ""
@@ -302,7 +277,6 @@ pipeline {
                 '''
             }
         }
-
 
         // =========================================================
         // BACKEND HEALTH CHECK
@@ -314,9 +288,10 @@ pipeline {
                     echo "BACKEND HEALTH CHECK"
                     echo "======================================"
 
+                    sleep 3
+
                     for INSTANCE_ID in ${APPLICATION_INSTANCE_IDS}
                     do
-
                         echo ""
                         echo "Checking ${INSTANCE_ID}"
 
@@ -326,8 +301,8 @@ pipeline {
                           --document-name "AWS-RunShellScript" \
                           --parameters "commands=[
                             \\"docker ps --filter name=${CONTAINER_NAME}\\",
-                            \\"curl -f http://localhost:${CONTAINER_PORT}/api/health || exit 1\\",
-                            \\"curl -f http://localhost:${CONTAINER_PORT}/api/database || exit 1\\"
+                            \\"curl -fsS http://localhost:${CONTAINER_PORT}/api/health || { docker logs --tail 50 ${CONTAINER_NAME}; exit 1; }\\",
+                            \\"curl -fsS http://localhost:${CONTAINER_PORT}/api/database || { docker logs --tail 50 ${CONTAINER_NAME}; exit 1; }\\"
                           ]" \
                           --query 'Command.CommandId' \
                           --output text)
@@ -338,7 +313,6 @@ pipeline {
 
                         for i in $(seq 1 20)
                         do
-
                             STATUS=$(aws ssm get-command-invocation \
                               --region ${AWS_REGION} \
                               --command-id ${COMMAND_ID} \
@@ -359,7 +333,6 @@ pipeline {
                             fi
 
                             sleep 5
-
                         done
 
                         aws ssm get-command-invocation \
@@ -373,7 +346,6 @@ pipeline {
                         fi
 
                         echo "Health check PASSED on ${INSTANCE_ID}"
-
                     done
 
                     echo ""
@@ -383,7 +355,6 @@ pipeline {
                 '''
             }
         }
-
 
         // =========================================================
         // FRONTEND BUILD
@@ -400,39 +371,25 @@ pipeline {
                         echo "REACT_APP_API_URL=http://${ALB_DNS}" > .env
                         cat .env
 
-                        echo "Node version:"
-                        node --version
+                        echo "Node version: $(node --version)"
+                        echo "NPM version: $(npm --version)"
 
-                        echo "NPM version:"
-                        npm --version
-
-                        echo ""
-                        echo "Cleaning old node_modules..."
+                        echo "Cleaning old node_modules and cache..."
                         rm -rf node_modules
-
-                        echo ""
-                        echo "Cleaning npm cache..."
                         npm cache clean --force
 
-                        echo ""
                         echo "Installing frontend dependencies..."
                         npm install
 
-                        echo ""
                         echo "Building React application..."
                         npm run build
 
-                        echo ""
                         echo "Frontend build completed successfully."
-
-                        echo ""
-                        echo "Build directory:"
                         ls -lah build/
                     '''
                 }
             }
         }
-
 
         // =========================================================
         // DEPLOY FRONTEND TO S3
@@ -450,13 +407,11 @@ pipeline {
                           --delete \
                           --region ${AWS_REGION}
 
-                        echo ""
                         echo "Frontend uploaded successfully."
                     '''
                 }
             }
         }
-
 
         // =========================================================
         // FRONTEND VERIFICATION
@@ -468,35 +423,26 @@ pipeline {
                     echo "FRONTEND VERIFICATION"
                     echo "======================================"
 
-                    echo "Checking index.html..."
-
+                    echo "Checking index.html in S3..."
                     aws s3api head-object \
                       --bucket ${S3_BUCKET} \
                       --key index.html \
                       --region ${AWS_REGION}
 
-                    echo ""
-                    echo "Frontend index.html verified successfully."
+                    echo "Checking S3 static website endpoint..."
+                    curl -fI \
+                      http://${S3_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com/
 
-                    echo ""
-                    echo "Checking S3 website..."
-
-                    curl -I \
-                      http://${S3_BUCKET}.s3-website-us-east-1.amazonaws.com/
-
-                    echo ""
                     echo "Frontend verification completed."
                 '''
             }
         }
     }
 
-
     // =============================================================
     // POST ACTIONS
     // =============================================================
     post {
-
         success {
             echo '''
             ======================================
