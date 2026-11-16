@@ -18,6 +18,7 @@ pipeline {
         CONTAINER_PORT = '5000'
         S3_BUCKET      = 'three-tier-webapp-frontend-bucket'
         SECRET_NAME    = 'three-tier-webapp/database'
+        CLOUDFRONT_DOMAIN = 'dbeopubmd4rgt.cloudfront.net'
     }
 
     stages {
@@ -424,17 +425,17 @@ pipeline {
                     echo "======================================"
                     echo "FRONTEND VERIFICATION"
                     echo "======================================"
-
+        
                     echo "Checking index.html in S3..."
                     aws s3api head-object \
                       --bucket ${S3_BUCKET} \
                       --key index.html \
                       --region ${AWS_REGION}
-
-                    echo "Checking S3 static website endpoint..."
+        
+                    echo "Checking CloudFront endpoint..."
                     curl -fI \
-                      http://${S3_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com/
-
+                      https://${CLOUDFRONT_DOMAIN}/
+        
                     echo "Frontend verification completed."
                 '''
             }
